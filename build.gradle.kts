@@ -1,3 +1,6 @@
+import org.gradle.kotlin.dsl.dependencies
+import org.gradle.kotlin.dsl.kotlin
+
 buildscript {
 	dependencies {
 		classpath("org.ow2.asm:asm:9.8")
