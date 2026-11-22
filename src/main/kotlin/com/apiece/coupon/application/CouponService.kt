@@ -4,6 +4,7 @@ import com.apiece.coupon.api.dto.CreateCouponRequest
 import com.apiece.coupon.domain.Coupon
 import com.apiece.coupon.domain.CouponRepository
 import com.apiece.coupon.domain.Issuance
+import com.apiece.coupon.infrastructure.messaging.IssuanceRequestProducer
 import com.apiece.coupon.infrastructure.messaging.IssuanceRequested
 import com.apiece.coupon.support.CouponNotFoundException
 import com.apiece.coupon.support.NotStartedException
@@ -17,7 +18,8 @@ class CouponService(
     private val couponRepository: CouponRepository,
     // private val issuanceRepository: IssuanceRepository,
     private val couponIssuer: CouponIssuer,
-    private val eventPublisher: ApplicationEventPublisher,
+    //private val eventPublisher: ApplicationEventPublisher,
+    private val issuanceRequestProducer: IssuanceRequestProducer,
 ) {
 
     @Transactional
@@ -52,7 +54,7 @@ class CouponService(
 
         val expiresAt = now.plusDays(coupon.validityDays.toLong())
         // 퍼블리셔로 변경
-        eventPublisher.publishEvent(
+        issuanceRequestProducer.publish(
             IssuanceRequested(
                 couponId = couponId,
                 userId = userId,
