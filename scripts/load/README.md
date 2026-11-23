@@ -18,7 +18,7 @@ git checkout <branch>
 ## part-2
 
 ```bash
-./scripts/load/part-3/run.sh
+./scripts/load/part-4/run.sh
 ```
 
 `run.sh` 는 `reset → create_coupon → k6 → verify` 를 한 번에 실행한다.
