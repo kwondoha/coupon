@@ -14,9 +14,9 @@ import org.springframework.stereotype.Service
 import java.time.LocalDateTime
 
 @Service
-class CouponService(
+class  CouponService(
     private val couponRepository: CouponRepository,
-    private val cacheProperties: CacheProperties,
+    private val couponIssuePolicyReader: CouponIssuePolicyReader,
     private val couponIssuer: CouponIssuer,
     private val issuanceRequestProducer: IssuanceRequestProducer,
     private val cacheMetrics: CacheMetrics,
@@ -38,24 +38,17 @@ class CouponService(
 
     @Transactional
     fun issue(couponId: Long, userId: Long): Issuance {
-        cacheMetrics.incrementCouponDbRead()
-        Thread.sleep(cacheProperties.simulatedLoadLatencyMs)
+        val policy = couponIssuePolicyReader.get(couponId)
 
-        val coupon = couponRepository.findById(couponId)
-            .orElseThrow { CouponNotFoundException() }
 
         val now = LocalDateTime.now()
-        if (!coupon.isBookingOpen(now)) {
+        if (!policy.isBookingOpen(now)) {
             throw NotStartedException()
         }
-        // redis에서 매진을 이미 체크하고 있음
-//        if (coupon.isSoldOut()) {
-//            throw SoldOutException()
-//        }
 
         couponIssuer.tryIssue(couponId, userId)
 
-        val expiresAt = now.plusDays(coupon.validityDays.toLong())
+        val expiresAt = now.plusDays(policy.validityDays.toLong())
         // 퍼블리셔로 변경
         issuanceRequestProducer.publish(
             IssuanceRequested(
@@ -72,17 +65,5 @@ class CouponService(
             issuedAt = now,
             expiresAt = expiresAt,
         )
-        // worker로 이동
-//        couponRepository.incrementIssuedQuantity(couponId)
-//
-//        // 이슈 발행
-//        return issuanceRepository.save(
-//            Issuance(
-//                userId = userId,
-//                couponId = couponId,
-//                issuedAt = now,
-//                expiresAt = now.plusDays(coupon.validityDays.toLong()),
-//            )
-//        )
     }
 }

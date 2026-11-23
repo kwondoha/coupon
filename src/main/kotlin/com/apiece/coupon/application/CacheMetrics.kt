@@ -15,7 +15,7 @@ class CacheMetrics {
         couponDbReads.incrementAndGet()
     }
 
-    fun incrementCouponCacheHit() {
+    fun incrementCouponCacheHits() {
         couponCacheHits.incrementAndGet()
     }
 
