@@ -4,22 +4,21 @@ import com.apiece.coupon.api.dto.CreateCouponRequest
 import com.apiece.coupon.domain.Coupon
 import com.apiece.coupon.domain.CouponRepository
 import com.apiece.coupon.domain.Issuance
-import com.apiece.coupon.infrastructure.cache.CacheProperties
 import com.apiece.coupon.infrastructure.messaging.IssuanceRequestProducer
 import com.apiece.coupon.infrastructure.messaging.IssuanceRequested
-import com.apiece.coupon.support.CouponNotFoundException
 import com.apiece.coupon.support.NotStartedException
-import jakarta.transaction.Transactional
+import com.apiece.coupon.support.SoldOutException
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDateTime
 
 @Service
-class  CouponService(
+class CouponService(
     private val couponRepository: CouponRepository,
     private val couponIssuePolicyReader: CouponIssuePolicyReader,
     private val couponIssuer: CouponIssuer,
     private val issuanceRequestProducer: IssuanceRequestProducer,
-    private val cacheMetrics: CacheMetrics,
+    private val soldOutState: SoldOutState,
 ) {
 
     @Transactional
@@ -36,10 +35,12 @@ class  CouponService(
         return coupon
     }
 
-    @Transactional
     fun issue(couponId: Long, userId: Long): Issuance {
-        val policy = couponIssuePolicyReader.get(couponId)
+        if (soldOutState.isSoldOut(couponId)) {
+            throw SoldOutException()
+        }
 
+        val policy = couponIssuePolicyReader.get(couponId)
 
         val now = LocalDateTime.now()
         if (!policy.isBookingOpen(now)) {
@@ -49,7 +50,6 @@ class  CouponService(
         couponIssuer.tryIssue(couponId, userId)
 
         val expiresAt = now.plusDays(policy.validityDays.toLong())
-        // 퍼블리셔로 변경
         issuanceRequestProducer.publish(
             IssuanceRequested(
                 couponId = couponId,

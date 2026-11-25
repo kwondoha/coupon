@@ -11,29 +11,30 @@ import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 private val log = KotlinLogging.logger {}
 
 @Repository
 class CouponCacheRepository(
-    private val redis: StringRedisTemplate,
-    private val mapper: ObjectMapper,
-    private val properties: CacheProperties,
+    private val redisTemplate: StringRedisTemplate,
+    private val objectMapper: ObjectMapper,
+    private val cacheProperties: CacheProperties,
     private val cacheMetrics: CacheMetrics,
 ) {
+
     private val backgroundExecutor = Executors.newFixedThreadPool(4) { r ->
         Thread(r, "coupon-cache-swr-refresh").apply { isDaemon = true }
     }
+
     private val lookupScript = listLuaScript("lua/cache-single-flight-swr.lua")
     private val releaseLockScript = longLuaScript("lua/release-lock.lua")
 
-    fun getIssuePolicyOrLoad(id: Long, loader: () -> CouponIssuePolicy) = getOrLoad(
-        cacheKey = "coupon:$id:issue-policy",
-        lockKey = "coupon:$id:issue-policy:lock",
-        loader = loader,
-    )
-
+    fun getIssuePolicyOrLoad(id: Long, loader: () -> CouponIssuePolicy): CouponIssuePolicy =
+        getOrLoad(
+            cacheKey = "coupon:$id:issue-policy",
+            lockKey = "coupon:$id:issue-policy:lock",
+            loader = loader,
+        )
 
     private fun getOrLoad(
         cacheKey: String,
@@ -43,16 +44,16 @@ class CouponCacheRepository(
         val token = UUID.randomUUID().toString()
         repeat(MAX_RETRIES) {
             val now = Instant.now().toEpochMilli()
-            val result = redis.runForStrings(
+            val result = redisTemplate.runForStrings(
                 lookupScript,
                 listOf(cacheKey, lockKey),
-                now, properties.freshMS, token, LOCK_TTL_MS,
+                now, cacheProperties.freshMs, token, LOCK_TTL_MS,
             )
 
             when (result[0]) {
                 "HIT" -> {
                     cacheMetrics.incrementCouponCacheHits()
-                    return mapper.readValue(result[1], CouponIssuePolicy::class.java)
+                    return objectMapper.readValue(result[1], CouponIssuePolicy::class.java)
                 }
                 "STALE_REFRESH" -> {
                     cacheMetrics.incrementCouponCacheHits()
@@ -60,17 +61,16 @@ class CouponCacheRepository(
                         try {
                             fillCache(cacheKey, lockKey, token, loader)
                         } catch (e: Exception) {
-                            log.warn { "백그라운드 SWR 갱신 실패 (KEY+$cacheKey): ${e.message}" }
+                            log.warn { "백그라운드 SWR 갱신 실패 (key=$cacheKey): ${e.message}" }
                         }
                     }
-                    return mapper.readValue(result[1], CouponIssuePolicy::class.java)
+                    return objectMapper.readValue(result[1], CouponIssuePolicy::class.java)
                 }
                 "LOAD" -> return fillCache(cacheKey, lockKey, token, loader)
-
                 "WAIT" -> Thread.sleep(WAIT_BACKOFF_MS)
             }
         }
-        throw IllegalStateException("쿠폰 캐시 채우기 timeout(key=$cacheKey")
+        throw IllegalStateException("쿠폰 캐시 채우기 timeout (key=$cacheKey)")
     }
 
     private fun fillCache(
@@ -82,19 +82,17 @@ class CouponCacheRepository(
         try {
             cacheMetrics.incrementCouponDbRead()
             val response = loader()
-            val json = mapper.writeValueAsString(response)
-            redis.opsForValue().set(cacheKey, json, Duration.ofMillis(properties.ttlMs))
-            redis.opsForHash<String, String>().putAll(
+            redisTemplate.opsForHash<String, String>().putAll(
                 cacheKey,
                 mapOf(
-                    "value" to mapper.writeValueAsString(response),
+                    "value" to objectMapper.writeValueAsString(response),
                     "fetchedAtMs" to Instant.now().toEpochMilli().toString(),
-                )
+                ),
             )
-            redis.expire(cacheKey, Duration.ofMillis(properties.ttlMs))
+            redisTemplate.expire(cacheKey, Duration.ofMillis(cacheProperties.ttlMs))
             return response
         } finally {
-            redis.runForLong(
+            redisTemplate.runForLong(
                 releaseLockScript,
                 listOf(lockKey),
                 token,
